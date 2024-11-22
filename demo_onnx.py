@@ -10,18 +10,12 @@ import os.path as osp
 
 from torch.utils.data import DataLoader
 
-from dust3r.losses import L21
 from dust3r.utils.geometry import inv
-from dust3r.inference import inference
-from dust3r.image_pairs import make_pairs
 from dust3r.utils.image import imread_cv2
 from dust3r.post_process import estimate_focal_knowing_depth
 
 from spann3r.datasets import *
-#from spann3r.model import Spann3R
 from spann3r.model_onnx import Spann3R
-from spann3r.loss import Regr3D_t_ScaleShiftInv
-from spann3r.tools.eval_recon import accuracy, completion
 from spann3r.tools.vis import render_frames, find_render_cam, vis_pred_and_imgs
 
 def get_args_parser():
