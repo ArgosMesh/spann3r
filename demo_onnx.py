@@ -94,8 +94,18 @@ def main(args):
 
 
     start = time.time()
-    
-    preds, preds_all = model.forward(batch)
+    feat1, feat2, pos1, pos2, shape1, shape2 = None, None, None, None, None, None
+    feat_k1, feat_k2 = None, None
+    preds_res1 = []
+
+    for i in range(len(batch)):
+        if i == len(batch)-1:
+            break
+        res1, res2, feat1, feat2, pos1, pos2, shape1, shape2, feat_k1, feat_k2 = model.forward(
+            batch[i], batch[i+1], feat1, feat2, pos1, pos2, shape1, shape2, feat_k1, feat_k2)
+        preds_res1.append(res1)
+    preds = preds_res1
+    preds.append(res2)
 
     end = time.time()
     ordered_batch = batch

@@ -319,64 +319,39 @@ class Spann3R(nn.Module):
         res = self.dust3r._downstream_head(num, [tok.float() for tok in dec], true_shape)
         return res
     
-    def forward(self, frames, return_memory=False):
+    def forward(self, view1, view2, feat1, feat2, pos1, pos2, shape1, shape2, feat_k1, feat_k2):
+        ##### Encode frames
+        # feat1: [bs, p=196, c=1024]   
+        feat1, feat2, pos1, pos2, shape1, shape2 = self.encode_frames(view1, view2, feat1, feat2, pos1, pos2, shape1, shape2)
 
-        feat1, feat2, pos1, pos2, shape1, shape2 = None, None, None, None, None, None
-        feat_k1, feat_k2 = None, None
-
-        preds = None
-        preds_all = []
-
-        for i in range(len(frames)):
-            if i == len(frames)-1:
-                break
-            view1 = frames[i]
-            view2 = frames[(i+1)]
-
-            ##### Encode frames
-            # feat1: [bs, p=196, c=1024]   
-            feat1, feat2, pos1, pos2, shape1, shape2 = self.encode_frames(view1, view2, feat1, feat2, pos1, pos2, shape1, shape2)
-
-            ##### Memory readout
-            if feat_k2 is not None:
-                feat_fuse = self.sp_mem.memory_read(feat_k2, res=True)
-                # feat_fuse = feat_fuse + feat1
-            else:
-                feat_fuse = feat1
-            
-            ##### Decode features
-            # dec1[-1]: [bs, p, c=768]
-            dec1, dec2 = self.decode(feat_fuse, pos1, feat2, pos2)
-            
-            ##### Encode feat key
-            feat_k1 = self.encode_feat_key(feat1, dec1[-1], 1)
-            feat_k2 = self.encode_feat_key(feat2, dec2[-1], 2)
-
-            ##### Regress pointmaps
-            res1 = self.downstream_head(dec1, shape1, 1)
-            res2 = self.downstream_head(dec2, shape2, 2)
-            
-            ##### Memory update
-            cur_v = self.encode_cur_value(res1, dec1, pos1, shape1)
-
-            self.sp_mem.add_mem_check(feat_k1, cur_v+feat_k1)
-            
-            res2['pts3d_in_other_view'] = res2.pop('pts3d')  
-             
-            if preds is None:
-                preds = [res1]
-                preds_all = [(res1, res2)]
-            else:
-                res1['pts3d_in_other_view'] = res1.pop('pts3d')
-                preds.append(res1)
-                preds_all.append((res1, res2))
-                
-        preds.append(res2)
-
-        if return_memory:
-            return preds, preds_all, self.sp_mem
+        ##### Memory readout
+        if feat_k2 is not None:
+            feat_fuse = self.sp_mem.memory_read(feat_k2, res=True)
+            # feat_fuse = feat_fuse + feat1
+        else:
+            feat_fuse = feat1
         
-        return preds, preds_all
+        ##### Decode features
+        # dec1[-1]: [bs, p, c=768]
+        dec1, dec2 = self.decode(feat_fuse, pos1, feat2, pos2)
+        
+        ##### Encode feat key
+        feat_k1 = self.encode_feat_key(feat1, dec1[-1], 1)
+        feat_k2 = self.encode_feat_key(feat2, dec2[-1], 2)
+
+        ##### Regress pointmaps
+        res1 = self.downstream_head(dec1, shape1, 1)
+        res2 = self.downstream_head(dec2, shape2, 2)
+        
+        ##### Memory update
+        cur_v = self.encode_cur_value(res1, dec1, pos1, shape1)
+
+        self.sp_mem.add_mem_check(feat_k1, cur_v+feat_k1)
+        
+        res2['pts3d_in_other_view'] = res2.pop('pts3d')  
+        res1['pts3d_in_other_view'] = res1['pts3d']
+        return res1, res2, feat1, feat2, pos1, pos2, shape1, shape2, feat_k1, feat_k2
+
 
 
     
