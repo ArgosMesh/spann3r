@@ -12,7 +12,7 @@ class SpatialMemory():
     def __init__(self, norm_q, norm_k, norm_v, mem_dropout=None, 
                  long_mem_size=4000, work_mem_size=5, 
                  attn_thresh=5e-4, sim_thresh=0.95, 
-                 save_attn=False, num_patches=None):
+                 save_attn=False, num_patches=196):
         self.norm_q = norm_q
         self.norm_k = norm_k
         self.norm_v = norm_v
@@ -23,10 +23,8 @@ class SpatialMemory():
         self.top_k = long_mem_size
         self.save_attn = save_attn
         self.sim_thresh = sim_thresh
-        self.num_patches = num_patches
-        self.init_mem()
-    
-    def init_mem(self):
+        self.num_patches = 196 # num_patches
+        ## init_mem
         self.mem_k = None
         self.mem_v = None
         self.mem_c = None
@@ -36,8 +34,6 @@ class SpatialMemory():
         self.mem_imgs = None
         self.lm = 0
         self.wm = 0
-        if self.save_attn:
-            self.attn_vis = None
 
     def add_mem_k(self, feat):
         if self.mem_k is None:
@@ -78,14 +74,14 @@ class SpatialMemory():
                 self.mem_imgs = torch.cat((self.mem_imgs, img_cur), dim=1)
 
     def add_mem(self, feat_k, feat_v, pts_cur=None, img_cur=None):  
-        if self.num_patches is None:
-            self.num_patches = feat_k.shape[1]
+        # if self.num_patches is None:
+        #     self.num_patches = feat_k.shape[1]
             
         if self.mem_count is None:
             self.mem_count = torch.zeros_like(feat_k[:, :, :1])
             self.mem_attn = torch.zeros_like(feat_k[:, :, :1])
         else:
-            self.mem_count += 1
+            self.mem_count = self.mem_count + 1
             self.mem_count = torch.cat((self.mem_count, torch.zeros_like(feat_k[:, :, :1])), dim=1)
             self.mem_attn = torch.cat((self.mem_attn, torch.zeros_like(feat_k[:, :, :1])), dim=1)
         
@@ -107,7 +103,8 @@ class SpatialMemory():
         feat_k_norm = F.normalize(feat_k, p=2, dim=-1)
         wm_norm = F.normalize(wm, p=2, dim=-1)
 
-        corr = torch.einsum('bpc,btpc->btp', feat_k_norm, wm_norm)
+        # corr = torch.einsum('bpc,btpc->btp', feat_k_norm, wm_norm)
+        corr = torch.sum(feat_k_norm[:, None, :, :] * wm_norm, dim=-1)
 
         mean_corr = torch.mean(corr, dim=-1)
 
@@ -118,17 +115,17 @@ class SpatialMemory():
         return False
 
     def add_mem_check(self, feat_k, feat_v, pts_cur=None, img_cur=None):
-        if self.num_patches is None:
-            self.num_patches = feat_k.shape[1]
+        # if self.num_patches is None:
+        #     self.num_patches = feat_k.shape[1]
 
         if self.check_sim(feat_k, thresh=self.sim_thresh):
             return
         
         self.add_mem(feat_k, feat_v, pts_cur, img_cur)
-        self.wm += 1
+        self.wm = self.wm + 1
 
         if self.wm > self.work_mem_size:
-            self.wm -= 1
+            self.wm = self.wm - 1
             if self.long_mem_size == 0:
                 self.mem_k = self.mem_k[:, self.num_patches:]
                 self.mem_v = self.mem_v[:, self.num_patches:]
@@ -136,13 +133,13 @@ class SpatialMemory():
                 self.mem_attn = self.mem_attn[:, self.num_patches:]
                 print('Memory pruned:', self.mem_k.shape)
             else:
-                self.lm += self.num_patches
+                self.lm = self.lm + self.num_patches
         
         if self.lm > self.long_mem_size:
             self.memory_prune()
             self.lm = self.top_k - self.wm * self.num_patches
     
-    def memory_read(self, feat, res=True):
+    def memory_read(self, feat):
         '''
         Params:
             - feat: [bs, p, c]
@@ -151,7 +148,11 @@ class SpatialMemory():
             - mem_c: [bs, t, p, 1]
         '''
         
-        affinity = torch.einsum('bpc,bxc->bpx', self.norm_q(feat), self.norm_k(self.mem_k.reshape(self.mem_k.shape[0], -1, self.mem_k.shape[-1])))
+        # affinity = torch.einsum('bpc,bxc->bpx', self.norm_q(feat), self.norm_k(self.mem_k.reshape(self.mem_k.shape[0], -1, self.mem_k.shape[-1])))
+        affinity = torch.matmul(
+            self.norm_q(feat), 
+            self.norm_k(self.mem_k.reshape(self.mem_k.shape[0], -1, self.mem_k.shape[-1])).transpose(-1, -2)
+        )
         affinity /= torch.sqrt(torch.tensor(feat.shape[-1]).float())
         
         if self.mem_c is not None:
@@ -159,26 +160,18 @@ class SpatialMemory():
         
         attn = torch.softmax(affinity, dim=-1)
 
-        if self.save_attn:
-            if self.attn_vis is None:
-                self.attn_vis = attn.reshape(-1)
-            else:
-                self.attn_vis = torch.cat((self.attn_vis, attn.reshape(-1)), dim=0)
-        if self.mem_dropout is not None:
-            attn = self.mem_dropout(attn)
-        
         if self.attn_thresh > 0:
             attn[attn<self.attn_thresh] = 0
             attn = attn / attn.sum(dim=-1, keepdim=True) 
         
-        out = torch.einsum('bpx,bxc->bpc', attn, self.norm_v(self.mem_v.reshape(self.mem_v.shape[0], -1, self.mem_v.shape[-1])))
-        
-        if res:
-            out = out + feat
-        
-        
+        # out = torch.einsum('bpx,bxc->bpc', attn, self.norm_v(self.mem_v.reshape(self.mem_v.shape[0], -1, self.mem_v.shape[-1])))
+        out = torch.matmul(
+            attn, 
+            self.norm_v(self.mem_v.reshape(self.mem_v.shape[0], -1, self.mem_v.shape[-1]))
+        )
+        out = out + feat
         total_attn = torch.sum(attn, dim=-2)
-        self.mem_attn += total_attn[..., None]
+        self.mem_attn = self.mem_attn + total_attn[..., None]
         
         return out
     
@@ -304,8 +297,7 @@ class Spann3R(nn.Module):
         x = self.value_out(x)
         return x
     
-    def encode_cur_value(self, res1, dec1, pos1, shape1):
-
+    def encode_cur_value(self, res1, shape1):
         out, pos_v = self.pos_patch_embed(res1['pts3d'].permute(0, 3, 1, 2), true_shape=shape1)
         cur_v = self.encode_value(out, pos_v)
         
@@ -326,8 +318,7 @@ class Spann3R(nn.Module):
 
         ##### Memory readout
         if feat_k2 is not None:
-            feat_fuse = self.sp_mem.memory_read(feat_k2, res=True)
-            # feat_fuse = feat_fuse + feat1
+            feat_fuse = self.sp_mem.memory_read(feat_k2)
         else:
             feat_fuse = feat1
         
@@ -341,17 +332,14 @@ class Spann3R(nn.Module):
 
         ##### Regress pointmaps
         res1 = self.downstream_head(dec1, shape1, 1)
-        res2 = self.downstream_head(dec2, shape2, 2)
+        res2 = None
+        # res2 = self.downstream_head(dec2, shape2, 2)
         
         ##### Memory update
-        cur_v = self.encode_cur_value(res1, dec1, pos1, shape1)
+        cur_v = self.encode_cur_value(res1, shape1)
 
         self.sp_mem.add_mem_check(feat_k1, cur_v+feat_k1)
         
-        res2['pts3d_in_other_view'] = res2.pop('pts3d')  
+        # res2['pts3d_in_other_view'] = res2.pop('pts3d')  
         res1['pts3d_in_other_view'] = res1['pts3d']
         return res1, res2, feat1, feat2, pos1, pos2, shape1, shape2, feat_k1, feat_k2
-
-
-
-    

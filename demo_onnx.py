@@ -105,10 +105,11 @@ def main(args):
             batch[i], batch[i+1], feat1, feat2, pos1, pos2, shape1, shape2, feat_k1, feat_k2)
         preds_res1.append(res1)
     preds = preds_res1
-    preds.append(res2)
+    #preds.append(res2)
 
     end = time.time()
-    ordered_batch = batch
+    #ordered_batch = batch
+    ordered_batch = batch[:-1]
         
     fps = len(batch) / (end - start)
     
